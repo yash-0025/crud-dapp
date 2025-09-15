@@ -1,6 +1,8 @@
 'use client'
 
-import { getCounterProgram, getCounterProgramId } from '@project/anchor'
+// import { getCounterProgram, getCounterProgramId } from '@project/anchor'
+
+import { getCrudProgram, getCrudProgramId, CrudIDL } from '@project/anchor'
 import { useConnection } from '@solana/wallet-adapter-react'
 import { Cluster, Keypair, PublicKey } from '@solana/web3.js'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -10,17 +12,31 @@ import { useAnchorProvider } from '../solana/solana-provider'
 import { useTransactionToast } from '../use-transaction-toast'
 import { toast } from 'sonner'
 
+interface CreateEntryArgs {
+  title: string;
+  message: string;
+  owner: PublicKey;
+}
+
 export function useCounterProgram() {
   const { connection } = useConnection()
   const { cluster } = useCluster()
+  console.log("Cluster in use:", cluster.name, cluster.endpoint)
+
   const transactionToast = useTransactionToast()
   const provider = useAnchorProvider()
-  const programId = useMemo(() => getCounterProgramId(cluster.network as Cluster), [cluster])
-  const program = useMemo(() => getCounterProgram(provider, programId), [provider, programId])
+  // const programId = useMemo(() => getCrudProgramId(cluster.network as Cluster), [cluster])
+  const programId = useMemo(() => 
+    cluster.network === "custom" ? new PublicKey('31r13vR2Cpty7RiZh6ZmXq4uDH4SbRV9t7AzFBFvvPEY') :
+     getCrudProgramId(cluster.network as Cluster), [cluster])
+  console.log("Program Id :: ", programId)
+  
+  const program = useMemo(() => getCrudProgram(provider, programId), [provider, programId])
+  console.log("Program  :: ", program)
 
   const accounts = useQuery({
     queryKey: ['counter', 'all', { cluster }],
-    queryFn: () => program.account.counter.all(),
+    queryFn: () => program.account.journalEntryState.all(),
   })
 
   const getProgramAccount = useQuery({
@@ -28,25 +44,38 @@ export function useCounterProgram() {
     queryFn: () => connection.getParsedAccountInfo(programId),
   })
 
-  const initialize = useMutation({
-    mutationKey: ['counter', 'initialize', { cluster }],
-    mutationFn: (keypair: Keypair) =>
-      program.methods.initialize().accounts({ counter: keypair.publicKey }).signers([keypair]).rpc(),
-    onSuccess: async (signature) => {
-      transactionToast(signature)
-      await accounts.refetch()
-    },
-    onError: () => {
-      toast.error('Failed to initialize account')
-    },
-  })
+ 
+
+  const createEntry = useMutation<string, Error, CreateEntryArgs>({
+    mutationKey: ['crud', 'create_journal_entry', {cluster}],
+    mutationFn: async({title, message, owner}) => {
+      const [journalEntryAddress] = PublicKey.findProgramAddressSync([
+        Buffer.from(title), owner.toBuffer()
+      ],
+      programId
+    )
+    console.log("Journal Entry Address :: ", journalEntryAddress);
+      return program.methods.createJournalEntry(title, message).rpc()
+},
+onSuccess: async(signature) => {
+  transactionToast(signature);
+  accounts.refetch();
+},
+onError: (error) => {
+  toast.error(`Failed to create journal entry: ${error.message}`)
+},
+
+
+})
 
   return {
     program,
     programId,
     accounts,
     getProgramAccount,
-    initialize,
+    createEntry
+
+
   }
 }
 
@@ -54,53 +83,47 @@ export function useCounterProgramAccount({ account }: { account: PublicKey }) {
   const { cluster } = useCluster()
   const transactionToast = useTransactionToast()
   const { program, accounts } = useCounterProgram()
+  const programId = useMemo(() => 
+    cluster.network === "custom" ? new PublicKey('31r13vR2Cpty7RiZh6ZmXq4uDH4SbRV9t7AzFBFvvPEY') :
+     getCrudProgramId(cluster.network as Cluster), [cluster])
+     console.log("Program Id :: ", programId)
 
   const accountQuery = useQuery({
     queryKey: ['counter', 'fetch', { cluster, account }],
-    queryFn: () => program.account.counter.fetch(account),
+    queryFn: () => program.account.journalEntryState.fetch(account),
   })
 
-  const closeMutation = useMutation({
-    mutationKey: ['counter', 'close', { cluster, account }],
-    mutationFn: () => program.methods.close().accounts({ counter: account }).rpc(),
-    onSuccess: async (tx) => {
-      transactionToast(tx)
+  const updateEntry = useMutation<string, Error, CreateEntryArgs>({
+    mutationKey: ['crud', 'update_journal_entry', {cluster}],
+    mutationFn: async({ title, message, owner}) => {
+      const [journalEntryAddress] = PublicKey.findProgramAddressSync([Buffer.from(title), owner.toBuffer()],
+      programId
+    )
+    return program.methods.updateJournalEntry(title,message).rpc();
+    },
+    onSuccess: async (signature) => {
+      transactionToast(signature)
       await accounts.refetch()
     },
+    onError: () => {
+      toast.error('Failed to update journal entry')
+    },
+
   })
 
-  const decrementMutation = useMutation({
-    mutationKey: ['counter', 'decrement', { cluster, account }],
-    mutationFn: () => program.methods.decrement().accounts({ counter: account }).rpc(),
-    onSuccess: async (tx) => {
-      transactionToast(tx)
-      await accountQuery.refetch()
+  const deleteEntry = useMutation({
+    mutationKey: ['crud', 'delete_journal_entry', {cluster, account}],
+    mutationFn: (title: string) => 
+      program.methods.deleteJournalEntry(title).rpc(),
+      onSuccess: (tx) => {
+        transactionToast(tx);
+        return accounts.refetch();
     },
   })
-
-  const incrementMutation = useMutation({
-    mutationKey: ['counter', 'increment', { cluster, account }],
-    mutationFn: () => program.methods.increment().accounts({ counter: account }).rpc(),
-    onSuccess: async (tx) => {
-      transactionToast(tx)
-      await accountQuery.refetch()
-    },
-  })
-
-  const setMutation = useMutation({
-    mutationKey: ['counter', 'set', { cluster, account }],
-    mutationFn: (value: number) => program.methods.set(value).accounts({ counter: account }).rpc(),
-    onSuccess: async (tx) => {
-      transactionToast(tx)
-      await accountQuery.refetch()
-    },
-  })
-
   return {
     accountQuery,
-    closeMutation,
-    decrementMutation,
-    incrementMutation,
-    setMutation,
+    updateEntry,
+    deleteEntry,
   }
+  
 }

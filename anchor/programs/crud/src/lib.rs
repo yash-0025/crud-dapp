@@ -2,7 +2,7 @@
 
 use anchor_lang::prelude::*;
 
-declare_id!("FqzkXZdwYjurnUKetJCAvaUw5WAqbwzU6gZEwydeEfqS");
+declare_id!("31r13vR2Cpty7RiZh6ZmXq4uDH4SbRV9t7AzFBFvvPEY");
 
 #[program]
 pub mod crud {
@@ -103,6 +103,7 @@ pub struct DeleteEntry<'info> {
 #[derive(InitSpace)]
 pub struct JournalEntryState {
     pub owner: Pubkey,
+    #[max_len(64)]
     pub title: String,
     #[max_len(256)]
     pub message: String,
